@@ -1,0 +1,12 @@
+{
+    "crons": [
+        {
+            "path": "/api/cron/check-expirations",
+            "schedule": "0 7 * * *"
+        },
+        {
+            "path": "/api/cron/update-statuses",
+            "schedule": "0 6 * * *"
+        }
+    ]
+}
