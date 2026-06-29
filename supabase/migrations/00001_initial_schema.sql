@@ -34,7 +34,7 @@ CREATE TABLE users (
     }'::jsonb,
     onboarding_completed BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_login_at TIMESTAMPTZ,
+    last_login_at TIMESTAMPTZ
 );
 
 -- =========================================================
@@ -119,7 +119,7 @@ CREATE INDEX idx_documents_compliance ON documents (compliance_item_id);
 CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     property_id UUID REFERENCES properties(id) ON DELETE SET NULL,
-    org_id UUID NOT NULL REFERENCES organisations(id)
+    org_id UUID NOT NULL REFERENCES organisations(id),
     name_encrypted TEXT NOT NULL,
     email_encrypted TEXT,
     phone_encrypted TEXT,

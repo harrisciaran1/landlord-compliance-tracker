@@ -13,8 +13,8 @@ AS $$
 DECLARE
     new_org_id UUID;
 BEGIN
-    INSERT INTO organisations (name) 
-    VALUES (org_name) 
+    INSERT INTO organisations (name)
+    VALUES (org_name)
     RETURNING id INTO new_org_id;
 
     INSERT INTO users (id, org_id, email, full_name, role)

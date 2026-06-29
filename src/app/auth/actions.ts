@@ -29,7 +29,7 @@ export async function signup(formData: FormData) {
         {
             user_id: data.user.id,
             user_email: email,
-            user_full_name: fullName,
+            user_name: fullName,
             org_name: `${fullName}'s Properties`,
         });
 
