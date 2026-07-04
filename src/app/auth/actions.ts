@@ -25,7 +25,7 @@ export async function signup(formData: FormData) {
 
     // Create organisation and user profile after signup
     if (rpcData.user) {
-        const { error: orgError } = await supabase.rpc("create_user_org", 
+        const { data: orgId, error: orgError } = await supabase.rpc("create_user_org", 
         {
             user_id: rpcData.user.id,
             user_email: email,
@@ -33,11 +33,24 @@ export async function signup(formData: FormData) {
             org_name: `${fullName}'s Properties`,
         });
 
-        console.log("RPC data:", rpcData);
-        console.log("RPC error:", orgError);
-
         if (orgError) {
             return { error: orgError.message };
+        }
+
+        if (!orgId) {
+            return { error: "Unable to create your organisation right now." };
+        }
+
+        const { error: updateError } = await supabase.auth.updateUser({
+            data: {
+                full_name: fullName,
+                org_id: orgId,
+                role: "owner",
+            },
+        });
+
+        if (updateError) {
+            return { error: updateError.message };
         }
     }
 

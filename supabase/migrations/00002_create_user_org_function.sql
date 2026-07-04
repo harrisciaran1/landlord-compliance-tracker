@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION create_user_org(
     user_email TEXT,
     user_name TEXT,
     org_name TEXT
-) RETURNS void
+) RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
@@ -19,5 +19,7 @@ BEGIN
 
     INSERT INTO users (id, org_id, email, full_name, role)
     VALUES (user_id, new_org_id, user_email, user_name, 'owner');
+
+    RETURN new_org_id;
 END;
 $$;

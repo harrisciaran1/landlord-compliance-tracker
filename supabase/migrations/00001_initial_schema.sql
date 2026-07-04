@@ -208,17 +208,21 @@ ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 
 -- Organisations: users can only see their own org
 CREATE POLICY "users_see_own_org" ON organisations
-    FOR SELECT USING (id = (SELECT org_id FROM users WHERE id = auth.uid()));
+    FOR SELECT USING (
+        id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+    );
 
 CREATE POLICY "owners_update_org" ON organisations
     FOR UPDATE USING (
-        id = (SELECT org_id FROM users WHERE id = auth.uid())
-        AND (SELECT role FROM users WHERE id = auth.uid()) = 'owner'
+        id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') = 'owner'
     );
 
 -- Users: see members of same org
 CREATE POLICY "users_see_org_members" ON users
-    FOR SELECT USING (org_id = (SELECT org_id FROM users WHERE id = auth.uid()));
+    FOR SELECT USING (
+        org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+    );
 
 CREATE POLICY "users_update_self" ON users
     FOR UPDATE USING (id = auth.uid());
@@ -226,119 +230,119 @@ CREATE POLICY "users_update_self" ON users
 -- Properties: org isolation
 CREATE POLICY "org_isolation_select" ON properties
     FOR SELECT USING (
-        org_id = (SELECT org_id FROM users WHERE id = auth.uid()) 
+        org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
     );
 
 CREATE POLICY "org_isolation_insert" ON properties
     FOR INSERT WITH CHECK (
-        org_id = (SELECT org_id FROM users WHERE id = auth.uid())
-        AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager')
+        org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager')
     );
 
 CREATE POLICY "org_isolation_update" ON properties
     FOR UPDATE USING (
-        org_id = (SELECT org_id FROM users WHERE id = auth.uid()) 
-        AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager')
+        org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager')
     );
 
 CREATE POLICY "org_isolation_delete" ON properties
     FOR DELETE USING (
-        org_id = (SELECT org_id FROM users WHERE id = auth.uid()) 
-        AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager')
+        org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager')
     );
 
 -- Compliance items: via property org
 CREATE POLICY "org_isolation_select" ON compliance_items
     FOR SELECT USING (property_id IN 
         (SELECT id FROM properties WHERE org_id = (
-            SELECT org_id FROM users WHERE id = auth.uid()
-        )
-    ));
+            (auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid
+        ))
+    );
 
 CREATE POLICY "org_isolation_insert" ON compliance_items
     FOR INSERT WITH CHECK (property_id IN 
         (SELECT id FROM properties WHERE org_id = (
-            SELECT org_id FROM users WHERE id = auth.uid()
-        )
-    ) AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager'));
+            (auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid
+        ))
+    AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager'));
 
 CREATE POLICY "org_isolation_update" ON compliance_items
     FOR UPDATE USING (property_id IN 
         (SELECT id FROM properties WHERE org_id = (
-            SELECT org_id FROM users WHERE id = auth.uid()
-        )
-    ) AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager'));
+            (auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid
+        ))
+    AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager'));
 
 CREATE POLICY "org_isolation_delete" ON compliance_items
     FOR DELETE USING (property_id IN 
         (SELECT id FROM properties WHERE org_id = (
-            SELECT org_id FROM users WHERE id = auth.uid()
-        )
-    ) AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager'));
+            (auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid
+        ))
+    AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager'));
 
 -- Documents: via compliance item -> property -> org
 CREATE POLICY "org_isolation_select" ON documents
     FOR SELECT USING (compliance_item_id IN (
         SELECT ci.id FROM compliance_items ci
         JOIN properties p ON ci.property_id = p.id
-        WHERE p.org_id = (SELECT org_id FROM users WHERE id = auth.uid())
+        WHERE p.org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
     ));
 
 CREATE POLICY "org_isolation_insert" ON documents
     FOR INSERT WITH CHECK (compliance_item_id IN (
         SELECT ci.id FROM compliance_items ci
         JOIN properties p ON ci.property_id = p.id
-        WHERE p.org_id = (SELECT org_id FROM users WHERE id = auth.uid())
-        ) AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager'));
+        WHERE p.org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        ) AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager'));
 
 CREATE POLICY "org_isolation_delete" ON documents
     FOR DELETE USING (compliance_item_id IN (
         SELECT ci.id FROM compliance_items ci
         JOIN properties p ON ci.property_id = p.id
-        WHERE p.org_id = (SELECT org_id FROM users WHERE id = auth.uid())
-        ) AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager'));
+        WHERE p.org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        ) AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager'));
 
 -- Tenants: org isolation
 CREATE POLICY "org_isolation_select" ON tenants
-    FOR SELECT USING (org_id = (SELECT org_id FROM users WHERE id = auth.uid()));
+    FOR SELECT USING (org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid));
 
 CREATE POLICY "org_isolation_insert" ON tenants
-    FOR INSERT WITH CHECK (org_id = (SELECT org_id FROM users WHERE id = auth.uid())
-        AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager')
+    FOR INSERT WITH CHECK (org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager')
     );
 
 CREATE POLICY "org_isolation_update" ON tenants
-    FOR UPDATE USING (org_id = (SELECT org_id FROM users WHERE id = auth.uid())
-        AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager')
+    FOR UPDATE USING (org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager')
     );
 
 CREATE POLICY "org_isolation_delete" ON tenants
-    FOR DELETE USING (org_id = (SELECT org_id FROM users WHERE id = auth.uid())
-        AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager')
+    FOR DELETE USING (org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager')
     );
 
 -- Notification log: org isolation (read-only for non-service roles)
 CREATE POLICY "org_isolation_select" ON notification_log
-    FOR SELECT USING (org_id = (SELECT org_id FROM users WHERE id = auth.uid()));
+    FOR SELECT USING (org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid));
 
 -- Notification snoozes: via compliance item
 CREATE POLICY "org_isolation_select" ON notification_snoozes
     FOR SELECT USING (compliance_item_id IN (
         SELECT ci.id FROM compliance_items ci
         JOIN properties p ON ci.property_id = p.id
-        WHERE p.org_id = (SELECT org_id FROM users WHERE id = auth.uid()) 
+        WHERE p.org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
     ));
 
 CREATE POLICY "org_isolation_insert" ON notification_snoozes
     FOR INSERT WITH CHECK (compliance_item_id IN (
         SELECT ci.id FROM compliance_items ci
         JOIN properties p ON ci.property_id = p.id
-        WHERE p.org_id = (SELECT org_id FROM users WHERE id = auth.uid()) 
+        WHERE p.org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid)
     ));
 
 -- Audit log: org isolation (read-only)
 CREATE POLICY "org_isolation_select" ON audit_log
-    FOR SELECT USING (org_id = (SELECT org_id FROM users WHERE id = auth.uid()));
+    FOR SELECT USING (org_id = ((auth.jwt() -> 'user_metadata' ->> 'org_id')::uuid));
 
 -- =========================================================
 -- SCHEDULED JOBS (pg_cron)
@@ -370,21 +374,18 @@ VALUES ('compliance-documents', 'compliance-documents', false);
 CREATE POLICY "org_members_upload" ON storage.objects
     FOR INSERT WITH CHECK (
         bucket_id = 'compliance-documents'
-        AND (storage.foldername(name))[1] = (SELECT org_id::text FROM users
-        WHERE id = auth.uid())
+        AND (storage.foldername(name))[1] = COALESCE((auth.jwt() -> 'user_metadata' ->> 'org_id'), '')
     );
 
 CREATE POLICY "org_members_read" ON storage.objects
     FOR SELECT USING (
         bucket_id = 'compliance-documents'
-        AND (storage.foldername(name))[1] = (SELECT org_id::text FROM users
-        WHERE id = auth.uid())
+        AND (storage.foldername(name))[1] = COALESCE((auth.jwt() -> 'user_metadata' ->> 'org_id'), '')
     );
 
 CREATE POLICY "org_members_delete" ON storage.objects
     FOR DELETE USING (
         bucket_id = 'compliance-documents'
-        AND (storage.foldername(name))[1] = (SELECT org_id::text FROM users
-        WHERE id = auth.uid())
-        AND (SELECT role FROM users WHERE id = auth.uid()) IN ('owner', 'manager')
+        AND (storage.foldername(name))[1] = COALESCE((auth.jwt() -> 'user_metadata' ->> 'org_id'), '')
+        AND COALESCE(auth.jwt() -> 'user_metadata' ->> 'role', 'viewer') IN ('owner', 'manager')
     );
