@@ -9,9 +9,9 @@ export async function signup(formData: FormData) {
 
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
-    const fullName = formData.get("full_Name") as string;
+    const fullName = formData.get("full_name") as string;
 
-    const { data, error } = await supabase.auth.signUp({
+    const { data: rpcData, error: orgError } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -19,19 +19,22 @@ export async function signup(formData: FormData) {
         },
     });
 
-    if (error) {
-        return { error: error.message };
+    if (orgError) {
+        return { error: orgError.message };
     }
 
     // Create organisation and user profile after signup
-    if (data.user) {
-        const { error: orgError } = await supabase.rpc("create_user_and_org", 
+    if (rpcData.user) {
+        const { error: orgError } = await supabase.rpc("create_user_org", 
         {
-            user_id: data.user.id,
+            user_id: rpcData.user.id,
             user_email: email,
             user_name: fullName,
             org_name: `${fullName}'s Properties`,
         });
+
+        console.log("RPC data:", rpcData);
+        console.log("RPC error:", orgError);
 
         if (orgError) {
             return { error: orgError.message };

@@ -51,12 +51,13 @@ export async function createProperty(formData: FormData) {
     if (error) return { error: error.message };
 
     //Create default compliance items based on property type
+    // NOTE: deposit_protection is NOT included - it's tenant-linked (Week 4)
     const defaultTypes = getDefaultComplianceItems(property_type);
     const items = defaultTypes.map((type) => ({
         property_id: property.id,
         type,
         status: "unknown",
-        is_recurring: type !== "deposit_protection",
+        is_recurring: true,
     }));
 
     await supabase.from("compliance_items").insert(items);
@@ -78,6 +79,7 @@ export async function updateComplianceItem(formData: FormData) {
     const notes = formData.get("notes") as string;
     const type = formData.get("type") as ComplianceType;
     const previousExpiryDate = formData.get("previous_expiry_date") as string;
+    const manualExpiryDate = formData.get("manual_expiry_date") as string;
 
     const updates: Record<string, unknown> = {
         certificate_number: certificateNumber || null,
@@ -87,7 +89,18 @@ export async function updateComplianceItem(formData: FormData) {
         updated_at: new Date().toISOString(),
     };
 
-    if (issueDate) {
+    // H2: fire_risk_assessment uses manual expiry date (assessors-defined)
+    if (type === "fire_risk_assessment" && manualExpiryDate) {
+        updates.issue_date = issueDate || null;
+        updates.expiry_date = manualExpiryDate;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const expiry = new Date(manualExpiryDate);
+        const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays < 0) updates.status = "expired";
+        else if (diffDays <= 30) updates.status = "expiring";
+        else updates.status = "valid";
+    } else if (issueDate) {
         updates.issue_date = issueDate;
         const expiryDate = calculateExpiryDate({
             type,
@@ -96,7 +109,6 @@ export async function updateComplianceItem(formData: FormData) {
         });
         updates.expiry_date = expiryDate;
 
-        // Calculate status
         if (expiryDate) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
