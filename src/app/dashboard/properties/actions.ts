@@ -151,3 +151,175 @@ export async function deleteProperty(propertyId: string) {
     revalidatePath("/dashboard");
     redirect("/dashboard");
 }
+
+// ================================================================
+// DOCUMENT ACTIONS (Week 3)
+// ================================================================
+
+/**
+ *  Confirm a document upload after the client has PUT the file to storage.
+ *  Updates the pending document row to set uploaded_at
+ */
+export async function confirmDocumentUpload(documentId: string) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Not authenticated" };
+    
+    if (!documentId) return { error: "Document ID is required" };
+
+    const { data: profile } = await supabase
+        .from("users")
+        .select("org_id")
+        .eq("id", user.id)
+        .single();
+
+    if (!profile) return { error: "User profile not found" };
+
+    // Verify ownership: document -> compliance_item -> property -> org
+    const { data: doc } = await supabase
+        .from("documents")
+        .select("id, file_path, uploaded_at, compliance_items!inner(property_id, properties(id, org_id))")
+        .eq("id", documentId)
+        .is("uploaded_at", null)
+        .single();
+
+    if (!doc) return { error: "Document not found or already confirmed" };
+
+    // Check org ownership
+    const compItem = doc.compliance_items as unknown as {
+        property_id: string;
+        properties: { id: string; org_id: string };
+    };
+    if (compItem.properties.org_id !== profile.org_id) {
+        return { error: "Access denied" };
+    }
+
+    // Verify file exists in storage (defensive check)
+    const pathParts = doc.file_path.split("/");
+    const fileName = pathParts.pop()!;
+    const folder = pathParts.join("/");
+    const { data: files } = await supabase.storage
+        .from("compliance-documents")
+        .list(folder, { search: fileName });
+
+    if (!files || files.length === 0) {
+        // Clean up orphan row
+        await supabase.from("documents").delete().eq("id", documentId);
+        return { error: "Upload verification failed. Please try again."};
+    }
+
+    // Mark as uploaded
+    const { error } = await supabase
+        .from("documents")
+        .update({ uploaded_at: new Date().toISOString() })
+        .eq("id", documentId);
+
+    if (error) return { error: error.message };
+
+    revalidatePath(`/dashboard/properties/${compItem.property_id}`);
+    revalidatePath("/dashboard");
+    return { success: true };
+}
+
+/**
+ *  Generate a signed download URL for a document (15-minute expiry).
+ */
+export async function getDocumentDownloadUrl(documentId: string) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Document ID is required" };
+
+    const { data: profile } = await supabase
+        .from("users")
+        .select("org_id")
+        .eq("id", user.id)
+        .single();
+
+    if (!profile) return { error: "User profile not found" };
+
+    // Verify ownership and that document is uploaded (not pending)
+    const { data: doc } = await supabase
+        .from("documents")
+        .select("id, file_path, file_name, mime_type, compliance_items!inner(property_id, properties!inner(id, org_id))")
+        .eq("id", documentId)
+        .not("uploaded_at", "is", null)
+        .single();
+
+    if (!doc) return { error: "Document not found" };
+
+    const compItem = doc.compliance_items as unknown as {
+        property_id: string;
+        properties: { id: string; org_id: string };
+    };
+    if (compItem.properties.org_id !== profile.org_id) {
+        return { error: "Access denied" };
+    }
+
+    // Generate signed URL (15 minutes = 900 seconds)
+    const { data, error } = await supabase.storage
+        .from("compliance-documents")
+        .createSignedUrl(doc.file_path, 900);
+
+    if (error || !data) {
+        return { error: "Failed to generate download URL" };
+    }
+
+    return { url: data.signedUrl, mime_type: doc.mime_type, file_name: doc.file_name };
+}
+
+/** 
+ * Delete a document from storage and database.
+ */
+export async function deleteDocument(documentId: string) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Not authenticated" };
+
+    if (!documentId) return { error: "Document ID is required" };
+
+    const { data: profile } = await supabase
+        .from("users")
+        .select("org_id")
+        .eq("id", user.id)
+        .single();
+
+    if (!profile) return { error: "User profile not found" };
+
+    // Verify ownership
+    const { data: doc } = await supabase
+        .from("documents")
+        .select("id, file_path, compliance_items!inner(property_id, properties!inner(id, org_id))")
+        .eq("id", documentId)
+        .single();
+
+    if (!doc) return { error: "Document not found" };
+
+    const compItem = doc.compliance_items as unknown as {
+        property_id: string;
+        properties: { id: string; org_id: string };
+    };
+    if (compItem.properties.org_id !== profile.org_id) {
+        return { error: "Access denied" };
+    }
+
+    // Delete from storage (best-effort - log errors but don't fail)
+    const { error: storageError } = await supabase.storage
+        .from("compliance-documents")
+        .remove([doc.file_path]);
+
+    if (storageError) {
+        console.warn("Storage deletion failed:", storageError.message);
+    }
+
+    // Delete from database
+    const { error: dbError } = await supabase
+        .from("documents")
+        .delete()
+        .eq("id", documentId);
+
+    if (dbError) return { error: "Failed to delete document" };
+
+    revalidatePath(`/dashboard/properties/${compItem.property_id}`);
+    revalidatePath("/dashboard");
+    return { success: true};
+}

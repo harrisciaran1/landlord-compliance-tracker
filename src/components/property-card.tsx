@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { StatusBadge } from  "./status-badge"
+import TrafficLigtBadge from  "./traffic-light-badge"
 import { getPropertyTypeLabel, type PropertyType } from "@/lib/compliance_templates";
+import { getComplianceTypeLabel, type ComplianceType } from "@/lib/expiry-engine";
 import { calculateStatus, getWorstStatus, type ComplianceStatus } from "@/lib/status";
 
 interface ComplianceItem {
@@ -34,17 +35,24 @@ export function PropertyCard({
     });
     const worstStatus = getWorstStatus(statuses);
 
-    // Find the soonest expiring item
-    const soonest = compliance_items
+    // Find the soonest expiring item (future dates only)
+    const futureItems = compliance_items
         .filter((item) => item.expiry_date && item.status !== "not_applicable")
-        .sort((a, b) => new Date(a.expiry_date!).getTime() - new Date(b.expiry_date!).getTime())[0];
+        .map((item) => ({
+            ...item,
+            statusInfo: calculateStatus(item.expiry_date),
+        }))
+        .filter((item) => item.statusInfo.daysRemaining !== null && item.statusInfo.daysRemaining >= 0)
+        .sort((a, b) => a.statusInfo.daysRemaining! - b.statusInfo.daysRemaining!);
 
-    const soonestStatus = soonest ? calculateStatus(soonest.expiry_date) : null;
+    const soonest = futureItems[0];
+    const contextText = soonest ? `${getComplianceTypeLabel(soonest.type as ComplianceType)} due in ${soonest.statusInfo.daysRemaining} days`
+        : undefined;
 
     return (
         <Link
             href={`/dashboard/properties/${id}`}
-            className="block rounded-lg border border-gray-200 p-4 hover:border-blue-300 hover:shadow-sm transition-colors"
+            className="block rounded-lg border border-gray-200 p-4 hover:border-blue-300 hover:shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -56,13 +64,16 @@ export function PropertyCard({
                         {getPropertyTypeLabel(property_type)}
                     </p>
                 </div>
-                <StatusBadge status={worstStatus} />
+                <TrafficLigtBadge status={worstStatus} context={contextText} />
             </div>
-            {soonestStatus && soonestStatus.daysRemaining !== null && (
+            {soonest && (
                 <p className="mt-3 text-sm text-gray-600">
-                    Next due: {soonestStatus.daysRemaining <= 0
-                        ? "Overdue"
-                        : `${soonestStatus.daysRemaining} days`}
+                    Next: {getComplianceTypeLabel(soonest.type as ComplianceType)} in {soonest.statusInfo.daysRemaining} days
+                </p>
+            )}
+            {!soonest && worstStatus === "expired" && (
+                <p className="mt-3 text-sm text-red-600">
+                    Has expired items - action needed
                 </p>
             )}
         </Link>

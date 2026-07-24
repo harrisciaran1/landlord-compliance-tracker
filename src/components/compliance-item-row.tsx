@@ -5,6 +5,9 @@ import { updateComplianceItem } from "@/app/dashboard/properties/actions";
 import { ComplianceType, getComplianceTypeLabel } from "@/lib/expiry-engine";
 import { StatusBadge } from "./status-badge";
 import { calculateStatus } from "@/lib/status";
+import DocumentList from "./document-list";
+import DocumentUpload from "./document-upload";
+import type { DocumentRow } from "@/lib/types/documents";
 
 interface ComplianceItemRowProps {
     id: string;
@@ -17,6 +20,7 @@ interface ComplianceItemRowProps {
     notes: string | null;
     status: string;
     previous_expiry_date: string | null;
+    documents: DocumentRow[];
 }
 
 export function ComplianceItemRow(props: ComplianceItemRowProps) {
@@ -33,6 +37,9 @@ export function ComplianceItemRow(props: ComplianceItemRowProps) {
         },
         null
     );
+
+    // Filter out pending documents (H2: orphan cleanup - only show confirmed uploads)
+    const confirmedDocuments = props.documents.filter((d) => d.uploaded_at !== null);
 
     return (
         <div className="rounded-lg border border-gray-200 p-4">
@@ -154,12 +161,18 @@ export function ComplianceItemRow(props: ComplianceItemRowProps) {
                     <button
                         type="submit"
                         disabled={pending}
-                        className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                        className="min-h-[44px] rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                     >
                         {pending ? "Saving..." : "Save"}    
                     </button>
                 </form>
             )}
+
+            {/* Document section - always visible below edit form */}
+            <div className="mt-4 border-t pt-3">
+                <DocumentList documents={confirmedDocuments} complianceItemId={props.id} />
+                <DocumentUpload complianceItemId={props.id} />
+            </div>
         </div>
     );
 }
