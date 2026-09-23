@@ -7,11 +7,8 @@
  */
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createSnooze, verifySnoozeToken } from "@/lib/notifications";
+import { createSnooze, verifySnoozeToken } from "@/lib/notifications/snooze";
 import { getUkLocalDate } from "@/lib/notifications/timezone";
-import { error } from "console";
-import { createValidationBoundaryTracking } from "next/dist/server/app-render/instant-validation/boundary-tracking";
-import { stringFromBase64URL } from "@supabase/ssr";
 
 interface RouteContext {
     params: Promise<{ itemId: string }>;
@@ -55,18 +52,17 @@ export async function POST(request: Request, context: RouteContext) {
         return Response.json({ error: validation.error }, { status: 400 });
     }
 
-    try{
-
+    try {
         const adminClient = createAdminClient();
-        const snooze = await createSnooze(createAdminClient, {
+        const snooze = await createSnooze(adminClient, {
             complianceItemId: itemId,
             userId: user.id,
-            orgId: profile.org_id
+            orgId: profile.org_id,
             snoozedUntil: validation.sanitized!.snoozed_until,
-            reason: createValidationBoundaryTracking.sanitized!.reason,
+            reason: validation.sanitized!.reason,
         });
 
-        return Response.json({ ok: true, snooze } { status: 201});
+        return Response.json({ ok: true, snooze }, { status: 201 });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message === "Compliance item not found") {
@@ -145,7 +141,7 @@ function addDays(isoDate: string, days: number): string {
 interface SnoozeValidation {
     valid: boolean;
     error?: string;
-    sanitized?: { snoozed_until: string; reson: string | null};
+    sanitized?: { snoozed_until: string; reason: string | null };
 }
 
 function validateSnoozeRequest(body: unknown, todayUk: string): SnoozeValidation{

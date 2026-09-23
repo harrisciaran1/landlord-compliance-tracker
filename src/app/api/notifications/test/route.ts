@@ -7,7 +7,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/notifications/channels/email";
-import { sendSms } from "@/lib/notifications/channel/sms";
+import { sendSms } from "@/lib/notifications/channels/sms";
 import { batchLogNotifications } from "@/lib/notifications/logger";
 import { ExpiryReminderEmail } from "@/lib/notifications/templates/expiry-reminder";
 import type { NotificationPrefs, NotificationChannel } from "@/lib/types/notifications";

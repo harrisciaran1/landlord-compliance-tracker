@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback } from "react";
-import { validateFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE, formatFileSize } from "@/lib/document";
+import { validateFile, ALLOWED_MIME_TYPES, MAX_FILE_SIZE, formatFileSize } from "@/lib/documents";
 import { confirmDocumentUpload } from "@/app/dashboard/properties/actions";
 import type { UploadUrlResponse } from "@/lib/types/api";
 import { RSCPathnameNormalizer } from "next/dist/server/normalizers/request/rsc";
