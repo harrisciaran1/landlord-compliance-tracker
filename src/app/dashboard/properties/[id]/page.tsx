@@ -3,6 +3,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getPropertyTypeLabel } from "@/lib/compliance_templates";
 import { ComplianceItemRow } from "@/components/compliance-item-row";
+import { TenantSection } from "@/components/tenant-section";
+import { getTenantsForProperty } from "../actions";
 import type { ComplianceType } from "@/lib/expiry-engine";
 import type { DocumentRow } from "@/lib/types/documents";
 
@@ -24,6 +26,8 @@ export default async function PropertDetailPage({ params }: Props) {
         .single();
 
     if (!property) notFound();
+
+    const tenants = await getTenantsForProperty(id);
 
     return (
         <main className="min-h-screen p-4 sm:p-8">
@@ -84,6 +88,8 @@ export default async function PropertDetailPage({ params }: Props) {
                         />
                     ))}
                 </div>
+
+                <TenantSection propertyId={id} tenants={tenants} />
             </div>
         </main>
     )

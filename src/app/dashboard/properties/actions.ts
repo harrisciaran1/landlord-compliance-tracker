@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getDefaultComplianceItems, PropertyType } from "@/lib/compliance_templates";
-import { calculateExpiryDate, type ComplianceType } from "@/lib/expiry-engine";
+import { calculateExpiryDate, calculateDepositDeadline, calculateStatusFromExpiry, type ComplianceType } from "@/lib/expiry-engine";
+import { encrypt, decrypt } from "@/lib/crypto";
+import type { Tenant, TenantRow, DepositScheme } from "@/lib/types/tenants";
 
 export async function createProperty(formData: FormData) {
     const supabase = await createClient();
@@ -322,4 +324,318 @@ export async function deleteDocument(documentId: string) {
     revalidatePath(`/dashboard/properties/${compItem.property_id}`);
     revalidatePath("/dashboard");
     return { success: true};
+}
+// ================================================================
+// TENANT ACTIONS (Week 4)
+// ================================================================
+
+/**
+ * Sync the deposit_protection compliance item for a property based on
+ * its currently active tenant. Creates, updates, or removes the item
+ * depending on whether an active tenant with a deposit exists.
+ */
+async function syncDepositProtectionItem(
+    supabase: Awaited<ReturnType<typeof createClient>>,
+    propertyId: string,
+    tenant: {
+        name: string;
+        tenancy_start: string;
+        deposit_amount_pence: number | null;
+        deposit_scheme: DepositScheme | null;
+        deposit_protected_date: string | null;
+        is_active: boolean;
+    }
+) {
+    const hasDeposit = tenant.is_active && !!tenant.deposit_amount_pence && tenant.deposit_amount_pence > 0;
+
+    const { data: existingItem } = await supabase
+        .from("compliance_items")
+        .select("id")
+        .eq("property_id", propertyId)
+        .eq("type", "deposit_protection")
+        .maybeSingle();
+
+    if (!hasDeposit) {
+        if (existingItem) {
+            await supabase.from("compliance_items").delete().eq("id", existingItem.id);
+        }
+        return;
+    }
+
+    const expiryDate = calculateDepositDeadline(tenant.tenancy_start);
+    const status = calculateStatusFromExpiry(expiryDate);
+    const depositPounds = ((tenant.deposit_amount_pence ?? 0) / 100).toFixed(2);
+
+    const itemData = {
+        property_id: propertyId,
+        type: "deposit_protection" as const,
+        status,
+        issue_date: tenant.deposit_protected_date || null,
+        expiry_date: expiryDate,
+        notes: `Tenant: ${tenant.name} | Deposit: £${depositPounds} | Scheme: ${tenant.deposit_scheme ?? "unknown"}`,
+        is_recurring: false,
+    };
+
+    if (existingItem) {
+        await supabase.from("compliance_items").update(itemData).eq("id", existingItem.id);
+    } else {
+        await supabase.from("compliance_items").insert(itemData);
+    }
+}
+
+function parseTenantFormData(formData: FormData) {
+    const depositAmountRaw = formData.get("deposit_amount_pence") as string;
+
+    return {
+        name: (formData.get("name") as string) || "",
+        email: (formData.get("email") as string) || null,
+        phone: (formData.get("phone") as string) || null,
+        tenancy_start: (formData.get("tenancy_start") as string) || "",
+        tenancy_end: (formData.get("tenancy_end") as string) || null,
+        deposit_amount_pence: depositAmountRaw ? parseInt(depositAmountRaw, 10) : null,
+        deposit_scheme: (formData.get("deposit_scheme") as DepositScheme) || null,
+        deposit_protected_date: (formData.get("deposit_protected_date") as string) || null,
+        prescribed_info_served: formData.get("prescribed_info_served") === "true",
+        prescribed_info_date: (formData.get("prescribed_info_date") as string) || null,
+        how_to_rent_served: formData.get("how_to_rent_served") === "true",
+        how_to_rent_date: (formData.get("how_to_rent_date") as string) || null,
+        right_to_rent_checked: formData.get("right_to_rent_checked") === "true",
+        right_to_rent_date: (formData.get("right_to_rent_date") as string) || null,
+        is_active: formData.get("is_active") === "true",
+    };
+}
+
+/**
+ * Create a new tenant with encrypted PII.
+ * If active and has a deposit, syncs the deposit_protection compliance item.
+ */
+export async function createTenant(formData: FormData) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Not authenticated" };
+
+    const { data: profile } = await supabase
+        .from("users")
+        .select("org_id")
+        .eq("id", user.id)
+        .single();
+
+    if (!profile) return { error: "User profile not found" };
+
+    const propertyId = formData.get("property_id") as string;
+    const fields = parseTenantFormData(formData);
+
+    if (!fields.name || !fields.tenancy_start || !propertyId) {
+        return { error: "Name, tenancy start date, and property are required" };
+    }
+
+    // Verify property belongs to user's org
+    const { data: property } = await supabase
+        .from("properties")
+        .select("id, org_id")
+        .eq("id", propertyId)
+        .eq("org_id", profile.org_id)
+        .single();
+
+    if (!property) {
+        return { error: "Property not found or access denied" };
+    }
+
+    const { data: tenant, error: tenantError } = await supabase
+        .from("tenants")
+        .insert({
+            property_id: propertyId,
+            org_id: profile.org_id,
+            name_encrypted: encrypt(fields.name)!,
+            email_encrypted: encrypt(fields.email),
+            phone_encrypted: encrypt(fields.phone),
+            tenancy_start: fields.tenancy_start,
+            tenancy_end: fields.tenancy_end,
+            deposit_amount_pence: fields.deposit_amount_pence,
+            deposit_scheme: fields.deposit_scheme,
+            deposit_protected_date: fields.deposit_protected_date,
+            prescribed_info_served: fields.prescribed_info_served,
+            prescribed_info_date: fields.prescribed_info_date,
+            how_to_rent_served: fields.how_to_rent_served,
+            how_to_rent_date: fields.how_to_rent_date,
+            right_to_rent_checked: fields.right_to_rent_checked,
+            right_to_rent_date: fields.right_to_rent_date,
+            is_active: fields.is_active,
+        })
+        .select("id")
+        .single();
+
+    if (tenantError) return { error: tenantError.message };
+
+    await syncDepositProtectionItem(supabase, propertyId, fields);
+
+    revalidatePath(`/dashboard/properties/${propertyId}`);
+    revalidatePath("/dashboard");
+    return { success: true, tenantId: tenant.id };
+}
+
+/**
+ * Update an existing tenant, re-encrypting PII and re-syncing the
+ * deposit_protection compliance item.
+ */
+export async function updateTenant(tenantId: string, formData: FormData) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Not authenticated" };
+
+    const { data: profile } = await supabase
+        .from("users")
+        .select("org_id")
+        .eq("id", user.id)
+        .single();
+
+    if (!profile) return { error: "User profile not found" };
+
+    const { data: existingTenant } = await supabase
+        .from("tenants")
+        .select("id, property_id, org_id")
+        .eq("id", tenantId)
+        .eq("org_id", profile.org_id)
+        .single();
+
+    if (!existingTenant) {
+        return { error: "Tenant not found or access denied" };
+    }
+
+    const fields = parseTenantFormData(formData);
+
+    if (!fields.name || !fields.tenancy_start) {
+        return { error: "Name and tenancy start date are required" };
+    }
+
+    const { error: updateError } = await supabase
+        .from("tenants")
+        .update({
+            name_encrypted: encrypt(fields.name)!,
+            email_encrypted: encrypt(fields.email),
+            phone_encrypted: encrypt(fields.phone),
+            tenancy_start: fields.tenancy_start,
+            tenancy_end: fields.tenancy_end,
+            deposit_amount_pence: fields.deposit_amount_pence,
+            deposit_scheme: fields.deposit_scheme,
+            deposit_protected_date: fields.deposit_protected_date,
+            prescribed_info_served: fields.prescribed_info_served,
+            prescribed_info_date: fields.prescribed_info_date,
+            how_to_rent_served: fields.how_to_rent_served,
+            how_to_rent_date: fields.how_to_rent_date,
+            right_to_rent_checked: fields.right_to_rent_checked,
+            right_to_rent_date: fields.right_to_rent_date,
+            is_active: fields.is_active,
+            updated_at: new Date().toISOString(),
+        })
+        .eq("id", tenantId);
+
+    if (updateError) return { error: updateError.message };
+
+    const propertyId = existingTenant.property_id;
+    if (propertyId) {
+        await syncDepositProtectionItem(supabase, propertyId, fields);
+        revalidatePath(`/dashboard/properties/${propertyId}`);
+    }
+    revalidatePath("/dashboard");
+    return { success: true };
+}
+
+/**
+ * Soft-delete a tenant: mark inactive, clear property link, set tenancy_end
+ * if not already set, and remove the deposit_protection compliance item.
+ */
+export async function deleteTenant(tenantId: string) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { error: "Not authenticated" };
+
+    const { data: profile } = await supabase
+        .from("users")
+        .select("org_id")
+        .eq("id", user.id)
+        .single();
+
+    if (!profile) return { error: "User profile not found" };
+
+    const { data: tenant } = await supabase
+        .from("tenants")
+        .select("property_id, tenancy_end")
+        .eq("id", tenantId)
+        .eq("org_id", profile.org_id)
+        .single();
+
+    if (!tenant) {
+        return { error: "Tenant not found or access denied" };
+    }
+
+    const propertyId = tenant.property_id;
+
+    const { error: deleteError } = await supabase
+        .from("tenants")
+        .update({
+            is_active: false,
+            property_id: null,
+            tenancy_end: tenant.tenancy_end || new Date().toISOString().split("T")[0],
+            updated_at: new Date().toISOString(),
+        })
+        .eq("id", tenantId);
+
+    if (deleteError) return { error: deleteError.message };
+
+    if (propertyId) {
+        await supabase
+            .from("compliance_items")
+            .delete()
+            .eq("property_id", propertyId)
+            .eq("type", "deposit_protection");
+
+        revalidatePath(`/dashboard/properties/${propertyId}`);
+    }
+    revalidatePath("/dashboard");
+    return { success: true };
+}
+
+/**
+ * Get all tenants (active + past) for a property with decrypted PII.
+ */
+export async function getTenantsForProperty(propertyId: string): Promise<Tenant[]> {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const { data: profile } = await supabase
+        .from("users")
+        .select("org_id")
+        .eq("id", user.id)
+        .single();
+
+    if (!profile) return [];
+
+    const { data: property } = await supabase
+        .from("properties")
+        .select("id")
+        .eq("id", propertyId)
+        .eq("org_id", profile.org_id)
+        .single();
+
+    if (!property) return [];
+
+    const { data: tenantRows } = await supabase
+        .from("tenants")
+        .select("*")
+        .eq("property_id", propertyId)
+        .order("tenancy_start", { ascending: false });
+
+    if (!tenantRows) return [];
+
+    return (tenantRows as TenantRow[]).map((row) => {
+        const { name_encrypted, email_encrypted, phone_encrypted, ...rest } = row;
+        return {
+            ...rest,
+            name: decrypt(name_encrypted)!,
+            email: decrypt(email_encrypted),
+            phone: decrypt(phone_encrypted),
+        };
+    });
 }

@@ -76,6 +76,31 @@ function addMonths(dateStr: string, months: number): string {
     return date.toISOString().split("T")[0];
 }
 
+/**
+ * Calculate deposit protection deadline (30 days from tenancy start).
+ * Used for deposit_protection compliance items (Week 4).
+ */
+export function calculateDepositDeadline(tenancyStart: string): string {
+    const start = new Date(tenancyStart);
+    start.setDate(start.getDate() + 30);
+    return start.toISOString().split("T")[0];
+}
+
+/**
+ * Calculate compliance status from an expiry date relative to today.
+ * Shared by property + tenant flows so status logic stays consistent.
+ */
+export function calculateStatusFromExpiry(expiryDate: string): "expired" | "expiring" | "valid" {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expiry = new Date(expiryDate);
+    const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) return "expired";
+    if (diffDays <= 30) return "expiring";
+    return "valid";
+}
+
 /** Human-readable label for compliance types */
 export function getComplianceTypeLabel(type: ComplianceType): string {
     const labels: Record<ComplianceType, string> = {
