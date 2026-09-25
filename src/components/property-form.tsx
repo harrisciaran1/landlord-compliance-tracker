@@ -39,7 +39,7 @@ export function PropertyForm() {
             )}
 
             <input type="hidden" name="postcode" value={postcode} />
-            <input type="hidden" name="council-area" value={councilArea} />
+            <input type="hidden" name="council_area" value={councilArea} />
 
             <div>
                 <label htmlFor="address_line1" className="block text-sm font-medium text-gray-700">
@@ -61,7 +61,6 @@ export function PropertyForm() {
                     id="address_line2"
                     name="address_line2"
                     type="text"
-                    required
                     className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 />
             </div>
