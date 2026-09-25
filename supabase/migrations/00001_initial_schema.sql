@@ -347,21 +347,35 @@ CREATE POLICY "org_isolation_select" ON audit_log
 -- =========================================================
 -- SCHEDULED JOBS (pg_cron)
 -- Daily status update at 06:00 UTC
+--
+-- Guarded because pg_cron is enabled on hosted Supabase but is not
+-- present by default in a fresh local stack. Without this check, a
+-- local `supabase start` / `db reset` fails here and leaves the
+-- database half-built. On hosted the cron schema exists, so behaviour
+-- is unchanged.
 -- =========================================================
 
-SELECT cron.schedule('update-compliance-status', '0 6 * * *', $$
-    UPDATE compliance_items
-    SET status = CASE
-        WHEN expiry_date IS NULL THEN status
-        WHEN expiry_date < CURRENT_DATE THEN 'expired'
-        WHEN expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN
-        'expiring'
-        ELSE 'valid'
-    END,
-    updated_at = now()
-    WHERE status != 'not_applicable'
-        AND expiry_date IS NOT NULL;
-$$);
+DO $cron_setup$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'cron') THEN
+        PERFORM cron.schedule('update-compliance-status', '0 6 * * *', $job$
+            UPDATE compliance_items
+            SET status = CASE
+                WHEN expiry_date IS NULL THEN status
+                WHEN expiry_date < CURRENT_DATE THEN 'expired'
+                WHEN expiry_date <= CURRENT_DATE + INTERVAL '30 days' THEN
+                'expiring'
+                ELSE 'valid'
+            END,
+            updated_at = now()
+            WHERE status != 'not_applicable'
+                AND expiry_date IS NOT NULL;
+        $job$);
+    ELSE
+        RAISE NOTICE 'pg_cron unavailable - skipping update-compliance-status schedule (expected on local stacks).';
+    END IF;
+END
+$cron_setup$;
 
 -- =========================================================
 -- STORAGE BUCKET
